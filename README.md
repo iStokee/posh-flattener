@@ -1,7 +1,7 @@
 # Flatten Code Repository
 
 `posh-flattener` is a PowerShell utility that flattens the source code of a repository into a single text file, and optionally generates a tree-style map of the folder structure.  
-It’s designed for tasks like code reviews, AI ingestion, or archiving, where having all relevant source in one file is useful.
+It’s designed mainly for aidong in AI ingestion, but could be used for tasks like code review or archiving, where having all relevant source in one file might be useful.
 
 ## Features
 
