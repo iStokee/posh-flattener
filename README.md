@@ -115,7 +115,7 @@ Useful when viewing in environments without UTF-8 support.
 ```
 ---
 
-**Notes**
+##Notes
 
 - The script writes files with **UTF-8 BOM** for compatibility with Windows editors.
 - Unicode tree branches display best in UTF-8-capable editors and consoles.
