@@ -113,7 +113,6 @@ Useful when viewing in environments without UTF-8 support.
      3 | }
 
 ```
-# ==== END FILE: src/Public/MyScript.ps1
 ```
 
 ---
