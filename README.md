@@ -104,16 +104,14 @@ Useful when viewing in environments without UTF-8 support.
     └── Example.Tests.ps1
 ```
 
-**Flattened File (`.flat.txt` with `-CodeFences -LineNumbers`):**
+**EXMAPLE: Flattened File (`.flat.txt` with `-CodeFences -LineNumbers`):**
 ```
 # ==== FILE: src/Public/MyScript.ps1 (size: 120 bytes; sha256: abc123...) ====
-```powershell
      1 | function Get-HelloWorld {
      2 |     "Hello, world!"
      3 | }
-
-```
-```
+	 
+...etc
 ```
 ---
 
