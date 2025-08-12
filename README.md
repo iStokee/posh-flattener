@@ -1,4 +1,4 @@
-# Flatten Code Repository
+# posh-flattener
 
 `posh-flattener` is a PowerShell utility that flattens the source code of a repository into a single text file, and optionally generates a tree-style map of the folder structure.
 
