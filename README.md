@@ -111,6 +111,7 @@ Useful when viewing in environments without UTF-8 support.
      1 | function Get-HelloWorld {
      2 |     "Hello, world!"
      3 | }
+
 ```
 # ==== END FILE: src/Public/MyScript.ps1
 ```
