@@ -102,8 +102,6 @@ Each file is wrapped with file markers; when enabled, code fences and line numbe
      1 | function Test-RiDVirtualization {
      2 |     <# .SYNOPSIS ... #>
      3 |     ...
-``` 
-# ==== END FILE: src\Public\Test-RiDVirtualization.ps1
 ```
 
 At the end of the flat file you’ll see a summary with counts and details for skipped files (too large, binary‑like, or filtered out as “not code”).
