@@ -104,7 +104,7 @@ Useful when viewing in environments without UTF-8 support.
     └── Example.Tests.ps1
 ```
 
-**EXMAPLE: Flattened File (`.flat.txt` with `-CodeFences -LineNumbers`):**
+**Flattened File (`.flat.txt` with `-CodeFences -LineNumbers`):**
 ```
 # ==== FILE: src/Public/MyScript.ps1 (size: 120 bytes; sha256: abc123...) ====
      1 | function Get-HelloWorld {
