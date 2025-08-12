@@ -105,6 +105,10 @@ Each file is wrapped with file markers; when enabled, code fences and line numbe
 ```
 
 At the end of the flat file you’ll see a summary with counts and details for skipped files (too large, binary‑like, or filtered out as “not code”).
+```
+# Included files: 2
+# Skipped files:  0
+```
 
 The map file starts with the repository root and timestamp, followed by a directory tree. Example (ASCII):
 
