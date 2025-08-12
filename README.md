@@ -12,7 +12,7 @@ It’s mainly ideal for pasting code into LLMs, but could also be useful for cod
 
 ## Highlights
 
-- **Smart language fences** (powershell, csharp, python, etc.) based on file extension/name
+- **Smart language fences** (`powershell`, `csharp`, `python`, etc.) based on file extension/name
 - **Selective include**: focus on `src/*`, `README.md`, or arbitrary patterns
 - **Clean map generation**: maps **only included files by default** when `-Include` is used
 - **Binary guard**: avoids obviously binary files and large files by size
