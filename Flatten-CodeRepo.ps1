@@ -41,7 +41,11 @@ param(
   # File patterns to skip (glob against file name only)
   [string[]]$ExcludeFilePatterns = @('*.min.js','*.min.css','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.dll','*.exe','*.pdb','*.jpg','*.jpeg','*.png','*.gif','*.webp','*.zip','*.7z','*.tar','*.gz','*.pdf','*.mp4','*.mov','*.wav','*.mp3','*.ico'),
 
-  # Only include files matching these patterns (relative path wildcards)
+  # Only include files matching these patterns (repo-relative).
+  # Examples:
+  #   -Include tests/*            # everything under tests/ (recursive)
+  #   -Include src/ridctl.psm1    # single file
+  #   -Include *.ps1,README.*     # glob by name or relpath
   [string[]]$Include,
 
   [switch]$IncludeDotfiles,
@@ -53,7 +57,12 @@ param(
   [int]$MaxFileBytes = 2MB,
 
   [switch]$Quiet,
-  [switch]$AsciiTree = $true
+
+  [switch]$AsciiTree = $true,
+  
+  [ValidateSet('All','Included')]
+  [string]$MapScope = 'All'
+
 )
 
 # ---- normalize list parameters (allow comma-separated single strings) ----
@@ -63,6 +72,23 @@ function _Split-IfSingleCommaString([string[]]$arr) {
   }
   return $arr
 }
+
+# Normalize a repo-relative path to '\' and remove leading .\ if present
+function _Norm-Rel([string]$s) {
+  if (-not $s) { return $s }
+  $s = $s.Replace('/','\')
+  if ($s.StartsWith('.\')) { $s = $s.Substring(2) }
+  return $s
+}
+
+# Quick check: does a normalized relative path fall under a normalized folder prefix?
+function _Rel-StartsWithDir([string]$rel, [string]$dir) {
+  if (-not $dir) { return $false }
+  # exact match (dir itself) OR any child of dir
+  return ($rel.Equals($dir, [StringComparison]::OrdinalIgnoreCase)) -or
+         ($rel.StartsWith("$dir\", [StringComparison]::OrdinalIgnoreCase))
+}
+
 
 $Extensions          = _Split-IfSingleCommaString $Extensions
 $ExcludeDirs         = _Split-IfSingleCommaString $ExcludeDirs
@@ -100,10 +126,26 @@ $LangMap = @{
 }
 
 function Get-RelativePath([string]$Base, [string]$Target) {
-  $basePath   = (Resolve-Path $Base).ProviderPath
-  $targetPath = (Resolve-Path $Target).ProviderPath
-  return [IO.Path]::GetRelativePath($basePath, $targetPath)
+  $basePath   = (Resolve-Path -LiteralPath $Base).ProviderPath.TrimEnd('\','/')
+  $targetPath = (Resolve-Path -LiteralPath $Target).ProviderPath
+
+  # If running on a runtime that has Path.GetRelativePath, use it
+  try {
+    $mi = [IO.Path].GetMethod('GetRelativePath', [Type[]]@([string],[string]))
+    if ($mi) {
+      return [IO.Path]::GetRelativePath($basePath, $targetPath)
+    }
+  } catch { }
+
+  # Fallback for Windows PowerShell / Full Framework
+  $sep = [IO.Path]::DirectorySeparatorChar
+  $baseUri   = [Uri]("$basePath$sep")  # ensure trailing sep so MakeRelativeUri works for siblings
+  $targetUri = [Uri]$targetPath
+  $relUri    = $baseUri.MakeRelativeUri($targetUri)
+  $rel       = [Uri]::UnescapeDataString($relUri.ToString())
+  return $rel -replace '/', $sep
 }
+
 
 function Is-ExcludedDir([string]$FullName, [string[]]$ExDirs) {
   foreach ($d in $ExDirs) {
@@ -124,13 +166,40 @@ function Is-ExcludedFile([IO.FileInfo]$f, [string[]]$Patterns) {
 }
 
 function Is-IncludedFile([IO.FileInfo]$f, [string[]]$Patterns, [string]$Root) {
+  # If no include list, everything is eligible
   if (-not $Patterns -or $Patterns.Count -eq 0) { return $true }
-  $rel = [IO.Path]::GetRelativePath($Root, $f.FullName)
+
+  $rel = _Norm-Rel (Get-RelativePath $Root $f.FullName)
+
   foreach ($p in $Patterns) {
-    if ($rel -like $p) { return $true }
+    if (-not $p) { continue }
+    $pat = _Norm-Rel $p
+
+    # Treat patterns that are clearly directories as recursive:
+    #   "tests", "tests/", "tests\"
+    if ($pat -match '[\\/]\s*$' -or (Test-Path -LiteralPath (Join-Path $Root $pat) -PathType Container)) {
+      $dir = $pat.TrimEnd('\','/')
+      if (_Rel-StartsWithDir $rel $dir) { return $true }
+      continue
+    }
+
+    # Treat "dir/*" as "everything under dir (recursive)"
+    if ($pat -like '*\*' -and $pat.EndsWith('\*')) {
+      $dir = $pat.Substring(0, $pat.Length - 2)  # remove '\*'
+      if (_Rel-StartsWithDir $rel $dir) { return $true }
+      continue
+    }
+
+    # Otherwise, do a filename/relpath wildcard match
+    if ($rel -like $pat) { return $true }
+
+    # Also check just the leaf against the pattern (so README.md works)
+    if ($f.Name -like $pat) { return $true }
   }
+
   return $false
 }
+
 
 function Is-KnownCode([IO.FileInfo]$f, [string[]]$Exts, [string[]]$KnownNames) {
   if ($KnownNames -contains $f.Name) { return $true }
@@ -169,77 +238,69 @@ function Write-Tree(
   [string]$Root,
   [System.IO.StreamWriter]$Writer,
   [string[]]$ExDirs,
-  [bool]$IncludeHidden
+  [bool]$IncludeHidden,
+  [string]$MapScope,                                # 'All' or 'Included'
+  [System.Collections.Generic.HashSet[string]]$IncludedRelSet,  # files only
+  [System.Collections.Generic.HashSet[string]]$IncludedDirSet   # directories containing included files
 ) {
+    $tee  = if ($AsciiTree) { '+-- ' } else { '├── ' }
+    $ell  = if ($AsciiTree) { '\-- ' } else { '└── ' }
+    $pipe = if ($AsciiTree) { '|   ' } else { '|   ' }
+    $sp   = '    '
 
-  $tee  = if ($AsciiTree) { '+-- ' } else { '├── ' }
-  $ell  = if ($AsciiTree) { '\-- ' } else { '└── ' }
-  $pipe = if ($AsciiTree) { '|   ' } else { '|   ' }
-  $sp   = '    '
+    $rootDir = Get-Item -LiteralPath $Root -ErrorAction Stop
+    $Writer.WriteLine("Repository map for: $($rootDir.FullName)")
+    $Writer.WriteLine("Generated: $((Get-Date).ToString('u'))")
+    $Writer.WriteLine()
+    $Writer.WriteLine("./")   # print root once
 
+    function Recurse([IO.DirectoryInfo]$dir, [string]$prefix, [string]$relDir) {
+      # If mapping only included items, prune empty branches
+      if ($MapScope -eq 'Included') {
+        if ($relDir -and -not $IncludedDirSet.Contains($relDir)) { return }
+      }
 
-  $rootDir = Get-Item -LiteralPath $Root -ErrorAction Stop
-  $Writer.WriteLine("Repository map for: $($rootDir.FullName)")
-  $Writer.WriteLine("Generated: $((Get-Date).ToString('u'))")
-  $Writer.WriteLine()
+      $childrenDirs = Get-ChildItem -LiteralPath $dir.FullName -Directory -Force:$IncludeHidden -ErrorAction SilentlyContinue |
+                      Where-Object { $_ -and ($ExDirs -notcontains $_.Name) } |
+                      Sort-Object Name
 
-  function Recurse([IO.DirectoryInfo]$dir, [string]$prefix) {
-    # Collect children (dirs first, then files), apply excludes only to dirs
-    $childrenDirs = Get-ChildItem -LiteralPath $dir.FullName -Directory -Force:$IncludeHidden -ErrorAction SilentlyContinue |
-                    Where-Object { $_ -and ($ExDirs -notcontains $_.Name) } |
-                    Sort-Object Name
+      $childrenFiles = Get-ChildItem -LiteralPath $dir.FullName -File -Force:$IncludeHidden -ErrorAction SilentlyContinue |
+                      Where-Object { $_ } |
+                      Sort-Object Name
 
-    $childrenFiles = Get-ChildItem -LiteralPath $dir.FullName -File -Force:$IncludeHidden -ErrorAction SilentlyContinue |
-                     Where-Object { $_ } |
-                     Sort-Object Name
+      $all = @()
+      if ($childrenDirs)  { $all += $childrenDirs }
+      if ($childrenFiles) { $all += $childrenFiles }
 
-    # Build $all without introducing $null
-    $all = @()
-    if ($childrenDirs)  { $all += $childrenDirs }
-    if ($childrenFiles) { $all += $childrenFiles }
+      for ($i = 0; $i -lt $all.Count; $i++) {
+        $it = $all[$i]
+        if ($null -eq $it) { continue }
+        $isLast = ($i -eq $all.Count - 1)
+        $branch = if ($isLast) { $ell } else { $tee }
 
-    for ($i = 0; $i -lt $all.Count; $i++) {
-      $it = $all[$i]
-      if ($null -eq $it) { continue }
+        if ($it -is [IO.DirectoryInfo]) {
+          $name = $it.Name
+          $childRel = if ($relDir) { Join-Path $relDir $name } else { $name }
 
-      $isLast = ($i -eq $all.Count - 1)
-      $branch = if ($isLast) { $ell } else { $tee }
+          # If Included mode and this dir has nothing included, skip printing it
+          if ($MapScope -eq 'Included' -and -not $IncludedDirSet.Contains($childRel)) { continue }
 
-      # Try to ensure we have a FileSystemInfo; if not, attempt rehydrate from string path
-      if (-not ($it -is [IO.FileSystemInfo])) {
-        try {
-          $it = Get-Item -LiteralPath ($it.ToString()) -ErrorAction Stop
-        } catch {
-          # If we still don't have an object, emit a defensive line and continue
-          $safeName = try { Split-Path -Path ($it.ToString()) -Leaf } catch { '(unknown)' }
-          $Writer.WriteLine("$prefix$branch$safeName")
-          continue
+          $Writer.WriteLine("$prefix$branch$name/")
+          $nextPrefix = if ($isLast) { $prefix + $sp } else { $prefix + $pipe }
+          Recurse -dir $it -prefix $nextPrefix -relDir $childRel
+        } else {
+          $relFile = _Norm-Rel (Get-RelativePath $Root $it.FullName)
+          if ($MapScope -eq 'Included' -and -not $IncludedRelSet.Contains($relFile)) { continue }
+
+          $Writer.WriteLine("$prefix$branch$($it.Name)")
         }
       }
-
-      # Safe name + dir detection
-      $name = $it.Name
-      $isDir = $it -is [IO.DirectoryInfo]
-      if (-not $isDir -and ($it.PSObject.Properties.Match('PSIsContainer').Count -gt 0)) {
-        $isDir = [bool]$it.PSIsContainer
-      }
-
-      if ($isDir) {
-        $Writer.WriteLine("$prefix$branch$name/")
-        $nextPrefix = if ($isLast) { $prefix + $sp } else { $prefix + $pipe }
-        Recurse -dir ([IO.DirectoryInfo]$it) -prefix $nextPrefix
-      } else {
-        $Writer.WriteLine("$prefix$branch$name")
-      }
     }
+
+    # start recursion at repo root
+    Recurse -dir $rootDir -prefix "" -relDir ""
+    $Writer.WriteLine()
   }
-
-  # Print root and begin recursion
-  $Writer.WriteLine("./")
-  Recurse -dir $rootDir -prefix ""
-  $Writer.WriteLine()
-}
-
 
 # ----- main -----
 $root = Resolve-AbsolutePath $Path
@@ -272,18 +333,46 @@ try {
   $flatWriter.WriteLine()
 
 
-  # Map
-  Write-Tree -Root $root -Writer $mapWriter -ExDirs $ExcludeDirs -IncludeHidden:$IncludeDotfiles
-
-  # Enumerate files
+  # Enumerate files (unchanged)
   $allFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force:$IncludeDotfiles -ErrorAction SilentlyContinue | Where-Object {
       -not (Is-ExcludedDir $_.DirectoryName $ExcludeDirs) -and
       -not (Is-ExcludedFile $_ $ExcludeFilePatterns) -and
       (Is-IncludedFile $_ $Include $root)
     } | Sort-Object FullName)
 
+  # Build sets for Included scope
+  $IncludedRelSet = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
   $included = 0
   $skipped  = New-Object System.Collections.Generic.List[string]
+
+  foreach ($f in $allFiles) {
+    $rel = _Norm-Rel (Get-RelativePath $root $f.FullName)
+    [void]$IncludedRelSet.Add($rel)
+  }
+
+  $IncludedDirSet = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+  # make sure root is considered present when using Included
+  [void]$IncludedDirSet.Add('')
+  foreach ($rel in $IncludedRelSet) {
+    $dir = Split-Path -Path $rel -Parent
+    while ($dir) {
+      if (-not $IncludedDirSet.Contains($dir)) { [void]$IncludedDirSet.Add($dir) }
+      $parent = Split-Path -Path $dir -Parent
+      if ($parent -eq $dir) { break }
+      $dir = $parent
+    }
+  }
+
+  # Now write the map (AFTER sets are ready)
+  Write-Tree -Root $root `
+    -Writer $mapWriter `
+    -ExDirs $ExcludeDirs `
+    -IncludeHidden:$IncludeDotfiles `
+    -MapScope $MapScope `
+    -IncludedRelSet $IncludedRelSet `
+    -IncludedDirSet $IncludedDirSet
+
+
 
   foreach ($f in $allFiles) {
     if ($f.Length -gt $MaxFileBytes) { 

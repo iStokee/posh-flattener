@@ -1,50 +1,54 @@
 # Flatten Code Repository
 
-`posh-flattener`is a PowerShell utility that flattens the source code of a repository into a single text file, and optionally generates a tree-style map of the folder structure.  
+`posh-flattener` is a PowerShell utility that flattens the source code of a repository into a single text file, and optionally generates a tree-style map of the folder structure.
 
-It’s designed mainly for aiding in AI ingestion, but could be used for tasks like code review or archiving, where having all relevant source in one file might be useful.
+It’s designed mainly for aiding AI ingestion, but also helps with code reviews, offline archiving, and producing a single searchable artifact from a large codebase.
+
+---
 
 ## Features
 
-- **Flatten source code** into a single `.txt` file with optional:
+- **Flatten source code** into a single `.txt` with optional:
   - Code fences for syntax highlighting
-  - Line numbers for easier referencing
-- **Generate a directory map** with Unicode or ASCII tree branches
-- **Filter files** by:
-  - Extension list
-  - Known code filenames (e.g., `Dockerfile`, `.gitignore`)
-  - Excluded directories and file patterns
-  - Explicit include patterns for targeting specific files
-  - Maximum file size
-- **Skip binary-like files** automatically
-- **Handles dotfiles** when `-IncludeDotfiles` is specified
-- **Deterministic output** — sorted file lists, consistent formatting
+  - Line numbers for easy referencing
+- **Generate a directory map** with Unicode or ASCII branches
+- **Flexible filtering**:
+  - Include by extension or known code filenames (e.g., `Dockerfile`, `.gitignore`)
+  - Exclude directories and filename patterns
+  - **Target specific files/folders** with `-Include`
+  - Limit by maximum file size
+- **Binary-like files skipped** automatically
+- **Optionally include dotfiles** with `-IncludeDotfiles`
+- **Deterministic output** — sorted, stable formatting
+- Works on **Windows PowerShell 5.1+** and **PowerShell 7+** (includes a relative-path polyfill for older runtimes)
 
 ---
 
 ## Installation
 
-No installation required — simply download the script and run it in PowerShell 5.1+ or PowerShell Core.
+No install needed — download the script and run it in PowerShell.
 
 ```powershell
-# Example: Run from the script's folder
+# Example: run from the script's folder
 .\Flatten-CodeRepo.ps1 -Path "C:\path\to\repo"
 ```
 
 ---
 
-## Usage
+## Usage Examples
 
-### Basic
+### 1) Basic
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path C:\src\my-repo
 ```
-Generates:
-- A flattened `.flat.txt` file
-- A `.map.txt` tree map file  
-Both are saved in a timestamped output folder.
+Creates:
+- `my-repo.flat.txt` (flattened code)
+- `my-repo.map.txt` (tree map)  
+in a timestamped output folder.
 
-### With Custom Outputs
+---
+
+### 2) Custom output paths + formatting
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path . `
   -OutputFile out\repo.flat.txt `
@@ -52,46 +56,110 @@ Both are saved in a timestamped output folder.
   -CodeFences `
   -LineNumbers
 ```
+Adds syntax highlighting and line numbers to the flattened file.
 
-### Using ASCII Tree Characters
+---
+
+### 3) ASCII tree mode
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path . -AsciiTree
 ```
-Useful when viewing in environments without UTF-8 support.
+Uses ASCII instead of Unicode for the tree map.
 
-### Filtering
+---
+
+### 4) Filter by extension & exclude common build dirs
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path . `
   -Extensions ps1,psm1,cs,csproj `
-  -ExcludeDirs .git,.github,bin,obj `
-  -Include src/*,README.md `
-  -MaxFileBytes 5242880
+  -ExcludeDirs .git,.github,bin,obj
+```
+
+---
+
+### 5) **Include only** specific files/folders (`-Include`)
+```powershell
+# Everything under "tests/" + one specific file in src/
+.\Flatten-CodeRepo.ps1 -Path . `
+  -Include tests/*,src/ridctl.psm1
+```
+
+```powershell
+# README + all .ps1 files in a subfolder
+.\Flatten-CodeRepo.ps1 -Path . `
+  -Include README.md,scripts/*.ps1
+```
+
+`-Include` matching rules (repo‑relative):
+
+| Pattern         | Matches                                                     |
+|-----------------|-------------------------------------------------------------|
+| `tests/*`       | All files in and under `tests/` (recursive)                 |
+| `docs/`         | Entire `docs/` folder recursively                           |
+| `src/Util.psm1` | Exactly that file                                           |
+| `*.ps1`         | Any `.ps1` anywhere                                         |
+| `README.*`      | Any README variant (e.g., `.md`, `.rst`)                    |
+
+> When `-Include` is specified, only matching files are considered for flattening and (optionally) for the map if you set `-MapScope Included`.
+
+---
+
+### 6) Control what the map shows (`-MapScope`)
+```powershell
+# Default: map the full repo for extra context
+.\Flatten-CodeRepo.ps1 -Path . -MapScope All
+```
+
+```powershell
+# Map only the included files and their parent folders
+.\Flatten-CodeRepo.ps1 -Path . `
+  -Include tests/*,src/ridctl.psm1 `
+  -MapScope Included
+```
+`All` (default) shows the whole project structure.  
+`Included` prunes the map down to only folders that lead to included files, plus the files themselves.
+
+---
+
+### 7) Increase max file size
+```powershell
+.\Flatten-CodeRepo.ps1 -Path . -MaxFileBytes 5242880   # 5 MB
+```
+
+---
+
+### 8) Append to an existing flattened file
+```powershell
+.\Flatten-CodeRepo.ps1 -Path ./lib `
+  -OutputFile merged.flat.txt `
+  -Append
 ```
 
 ---
 
 ## Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `-Path` | **(Required)** Root path of the repository to flatten |
-| `-OutputFile` | Path for flattened code output file |
-| `-MapFile` | Path for tree map output file |
-| `-Extensions` | File extensions to include (no `.`) |
-| `-ExcludeDirs` | Directories to skip anywhere in the tree |
-| `-ExcludeFilePatterns` | Glob patterns to skip by filename |
-| `-Include` | Only include files matching these wildcard patterns (relative paths) |
-| `-IncludeDotfiles` | Include hidden/dotfiles in search |
-| `-LineNumbers` | Add line numbers to flattened output |
-| `-CodeFences` | Wrap file contents in markdown code fences |
-| `-Append` | Append to existing output file instead of overwriting |
-| `-MaxFileBytes` | Skip files larger than this size (default: 2 MB) |
-| `-Quiet` | Suppress console logging |
-| `-AsciiTree` | Use ASCII instead of Unicode for tree map |
+| Parameter               | Description |
+|-------------------------|-------------|
+| `-Path`                 | **Required.** Root path of the repository to flatten |
+| `-OutputFile`           | Path for flattened code output file |
+| `-MapFile`              | Path for tree map output file |
+| `-Extensions`           | File extensions to include (no dot, case-insensitive) |
+| `-ExcludeDirs`          | Directories to skip (applies anywhere in the tree) |
+| `-ExcludeFilePatterns`  | Glob patterns to skip by **filename** (e.g., `*.min.js`) |
+| `-Include`              | Only include files matching these **repo-relative** patterns (wildcards allowed) |
+| `-IncludeDotfiles`      | Include hidden/dotfiles in the search |
+| `-LineNumbers`          | Add line numbers to the flattened output |
+| `-CodeFences`           | Wrap file contents in Markdown code fences |
+| `-Append`               | Append to existing output file instead of overwriting |
+| `-MaxFileBytes`         | Skip files larger than this size (default: 2 MB) |
+| `-Quiet`                | Suppress console logging |
+| `-AsciiTree`            | Use ASCII instead of Unicode for the tree map |
+| `-MapScope`             | `All` (default) maps the entire repo; `Included` maps only included files + their parent folders |
 
 ---
 
-## Output Example
+## Output Examples
 
 **Tree Map (`.map.txt`):**
 ```
@@ -114,18 +182,18 @@ Useful when viewing in environments without UTF-8 support.
      1 | function Get-HelloWorld {
      2 |     "Hello, world!"
      3 | }
-	 
-...etc
+# ==== END FILE: src/Public/MyScript.ps1
 ```
+
 ---
 
 ## Notes
 
-- The script writes files with **UTF-8 BOM** for compatibility with Windows editors.
-- Unicode tree branches display best in UTF-8-capable editors and consoles.
-- ASCII tree mode is recommended for legacy console environments.
+- Output files are **UTF‑8 with BOM** for better Windows editor compatibility.
+- Unicode tree branches display best in UTF‑8‑capable editors/consoles; use `-AsciiTree` for legacy consoles.
+- A compatibility polyfill is used when `[System.IO.Path]::GetRelativePath` isn’t available (e.g., Windows PowerShell 5.1).
 
-Generated with assistance from ChatGPT (GPT 5) ❤️
+Generated with assistance from ChatGPT (GPT‑5) ❤️
 
 ---
 
