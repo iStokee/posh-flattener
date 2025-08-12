@@ -304,17 +304,31 @@ function Write-Tree(
 
 # ----- main -----
 $root = Resolve-AbsolutePath $Path
-$repoName = Split-Path -Leaf $root
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$outDir = Join-Path (Get-Location) "$repoName.flatten.$stamp"
-if (-not (Test-Path $outDir)) { [void](New-Item -ItemType Directory -Path $outDir) }
 
-if (-not $OutputFile) { $OutputFile = Join-Path $outDir "$repoName.flat.txt" }
-if (-not $MapFile)    { $MapFile    = Join-Path $outDir "$repoName.map.txt" }
+# Decide default paths lazily; only create a timestamped dir if we need defaults
+if (-not $OutputFile -or -not $MapFile) {
+  $repoName       = Split-Path -Leaf $root
+  $stamp          = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $defaultOutDir  = Join-Path (Get-Location) "$repoName.flatten.$stamp"
+}
+
+if (-not $OutputFile) { $OutputFile = Join-Path $defaultOutDir "$repoName.flat.txt" }
+if (-not $MapFile)    { $MapFile    = Join-Path $defaultOutDir "$repoName.map.txt" }
+
+# Ensure parent directories exist only for the actual targets we’ll write
+$parents = @(
+  Split-Path -Parent $OutputFile
+  Split-Path -Parent $MapFile
+) | Where-Object { $_ } | Sort-Object -Unique
+
+foreach ($p in $parents) {
+  if (-not (Test-Path $p)) { [void](New-Item -ItemType Directory -Path $p -Force) }
+}
 
 Write-Log "Root:        $root"
 Write-Log "Flat file:   $OutputFile"
 Write-Log "Map file:    $MapFile"
+
 
 # Create writers
 $utf8WithBom = New-Object System.Text.UTF8Encoding($true)
