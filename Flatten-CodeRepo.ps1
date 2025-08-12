@@ -73,6 +73,7 @@ function _Split-IfSingleCommaString([string[]]$arr) {
   return $arr
 }
 
+
 # Normalize a repo-relative path to '\' and remove leading .\ if present
 function _Norm-Rel([string]$s) {
   if (-not $s) { return $s }
@@ -89,11 +90,17 @@ function _Rel-StartsWithDir([string]$rel, [string]$dir) {
          ($rel.StartsWith("$dir\", [StringComparison]::OrdinalIgnoreCase))
 }
 
-
 $Extensions          = _Split-IfSingleCommaString $Extensions
 $ExcludeDirs         = _Split-IfSingleCommaString $ExcludeDirs
 $ExcludeFilePatterns = _Split-IfSingleCommaString $ExcludeFilePatterns
 $Include             = _Split-IfSingleCommaString $Include
+
+# If -Include was provided and -MapScope was NOT explicitly set,
+# default to 'Included' instead of 'All'.
+if ($Include -and $Include.Count -gt 0 -and -not $PSBoundParameters.ContainsKey('MapScope')) {
+  $MapScope = 'Included'
+}
+
 
 
 Set-StrictMode -Version Latest
@@ -411,7 +418,7 @@ try {
 
     if ($CodeFences) {
       $lang = Get-FenceLang $f
-      $flatWriter.WriteLine("```$lang")
+      $flatWriter.WriteLine([string]::Concat('```', $lang))
     }
 
     if ($LineNumbers) {
