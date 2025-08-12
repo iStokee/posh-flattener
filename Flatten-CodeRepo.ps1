@@ -10,6 +10,9 @@
 
 .EXAMPLE
   .\Flatten-CodeRepo.ps1 -Path . -Extensions ps1,psm1,cs,csproj,sln -IncludeDotfiles -MaxFileBytes 5242880
+
+.EXAMPLE
+  .\Flatten-CodeRepo.ps1 -Path . -Include src/*,README.md
 #>
 
 [CmdletBinding()]
@@ -38,6 +41,9 @@ param(
   # File patterns to skip (glob against file name only)
   [string[]]$ExcludeFilePatterns = @('*.min.js','*.min.css','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.dll','*.exe','*.pdb','*.jpg','*.jpeg','*.png','*.gif','*.webp','*.zip','*.7z','*.tar','*.gz','*.pdf','*.mp4','*.mov','*.wav','*.mp3','*.ico'),
 
+  # Only include files matching these patterns (relative path wildcards)
+  [string[]]$Include,
+
   [switch]$IncludeDotfiles,
   [switch]$LineNumbers,
   [switch]$CodeFences,
@@ -61,6 +67,7 @@ function _Split-IfSingleCommaString([string[]]$arr) {
 $Extensions          = _Split-IfSingleCommaString $Extensions
 $ExcludeDirs         = _Split-IfSingleCommaString $ExcludeDirs
 $ExcludeFilePatterns = _Split-IfSingleCommaString $ExcludeFilePatterns
+$Include             = _Split-IfSingleCommaString $Include
 
 
 Set-StrictMode -Version Latest
@@ -93,10 +100,9 @@ $LangMap = @{
 }
 
 function Get-RelativePath([string]$Base, [string]$Target) {
-  $baseUri   = [Uri](Resolve-Path $Base).ProviderPath
-  $targetUri = [Uri](Resolve-Path $Target).ProviderPath
-  $rel = $baseUri.MakeRelativeUri($targetUri).ToString()
-  return ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+  $basePath   = (Resolve-Path $Base).ProviderPath
+  $targetPath = (Resolve-Path $Target).ProviderPath
+  return [IO.Path]::GetRelativePath($basePath, $targetPath)
 }
 
 function Is-ExcludedDir([string]$FullName, [string[]]$ExDirs) {
@@ -113,6 +119,15 @@ function Is-ExcludedDir([string]$FullName, [string[]]$ExDirs) {
 function Is-ExcludedFile([IO.FileInfo]$f, [string[]]$Patterns) {
   foreach ($p in $Patterns) {
     if ($f.Name -like $p) { return $true }
+  }
+  return $false
+}
+
+function Is-IncludedFile([IO.FileInfo]$f, [string[]]$Patterns, [string]$Root) {
+  if (-not $Patterns -or $Patterns.Count -eq 0) { return $true }
+  $rel = [IO.Path]::GetRelativePath($Root, $f.FullName)
+  foreach ($p in $Patterns) {
+    if ($rel -like $p) { return $true }
   }
   return $false
 }
@@ -263,8 +278,9 @@ try {
   # Enumerate files
   $allFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force:$IncludeDotfiles -ErrorAction SilentlyContinue | Where-Object {
       -not (Is-ExcludedDir $_.DirectoryName $ExcludeDirs) -and
-      -not (Is-ExcludedFile $_ $ExcludeFilePatterns)
-    } |Sort-Object FullName)
+      -not (Is-ExcludedFile $_ $ExcludeFilePatterns) -and
+      (Is-IncludedFile $_ $Include $root)
+    } | Sort-Object FullName)
 
   $included = 0
   $skipped  = New-Object System.Collections.Generic.List[string]

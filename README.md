@@ -14,6 +14,7 @@ It’s designed mainly for aiding in AI ingestion, but could be used for tasks l
   - Extension list
   - Known code filenames (e.g., `Dockerfile`, `.gitignore`)
   - Excluded directories and file patterns
+  - Explicit include patterns for targeting specific files
   - Maximum file size
 - **Skip binary-like files** automatically
 - **Handles dotfiles** when `-IncludeDotfiles` is specified
@@ -63,6 +64,7 @@ Useful when viewing in environments without UTF-8 support.
 .\Flatten-CodeRepo.ps1 -Path . `
   -Extensions ps1,psm1,cs,csproj `
   -ExcludeDirs .git,.github,bin,obj `
+  -Include src/*,README.md `
   -MaxFileBytes 5242880
 ```
 
@@ -78,6 +80,7 @@ Useful when viewing in environments without UTF-8 support.
 | `-Extensions` | File extensions to include (no `.`) |
 | `-ExcludeDirs` | Directories to skip anywhere in the tree |
 | `-ExcludeFilePatterns` | Glob patterns to skip by filename |
+| `-Include` | Only include files matching these wildcard patterns (relative paths) |
 | `-IncludeDotfiles` | Include hidden/dotfiles in search |
 | `-LineNumbers` | Add line numbers to flattened output |
 | `-CodeFences` | Wrap file contents in markdown code fences |
