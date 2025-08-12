@@ -121,6 +121,8 @@ Useful when viewing in environments without UTF-8 support.
 - Unicode tree branches display best in UTF-8-capable editors and consoles.
 - ASCII tree mode is recommended for legacy console environments.
 
+Generated with assistance from ChatGPT (GPT-5) ❤️
+
 ---
 
 ## License
