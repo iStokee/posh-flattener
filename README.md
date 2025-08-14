@@ -50,7 +50,7 @@ You can also add the script’s folder to your `PATH` for easier use.
                        [-Append]
                        [-MaxFileBytes <bytes>]
                        [-Quiet]
-                       [-AsciiTree]               # default: $true (ASCII). Pass -AsciiTree:$false for Unicode
+                       [-AsciiTree]               # default: $false (Unicode). Pass -AsciiTree:$true for ASCII
                        [-MapScope <All|Included>] # default: 'All' unless -Include is used (see below)
 ```
 
@@ -77,7 +77,7 @@ You can also add the script’s folder to your `PATH` for easier use.
 - **`-Append`**: Append to an existing flat file (useful for combining multiple repos).
 - **`-MaxFileBytes`**: Skip files larger than this (default `2MB`).
 - **`-Quiet`**: Suppress log chatter.
-- **`-AsciiTree`**: ASCII tree when `$true` (default). Set `-AsciiTree:$false` for Unicode (`├──`, `└──`).  
+- **`-AsciiTree`**: ASCII tree when `$true`. Set `-AsciiTree:$false` for Unicode (`├──`, `└──`) (default).  
 - **`-MapScope`**: `All` or `Included`. See defaulting rule above.
 
 ### Include patterns (repo‑relative; case‑insensitive)
@@ -120,7 +120,7 @@ The map file starts with the repository root and timestamp, followed by a direct
 \-- README.md
 ```
 
-Set `-AsciiTree:$false` for a Unicode map:
+Unicode tree output (default):
 
 ```text
 ./
@@ -168,9 +168,9 @@ Set `-AsciiTree:$false` for a Unicode map:
 .\Flatten-CodeRepo.ps1 -Path . -Include src/*,README.md -MapScope All
 ```
 
-### 6) Unicode tree output
+### 6) ASCII tree output
 ```powershell
-.\Flatten-CodeRepo.ps1 -Path . -AsciiTree:$false
+.\Flatten-CodeRepo.ps1 -Path . -AsciiTree:$true
 ```
 
 ### 7) Append to an existing flat file

@@ -58,7 +58,7 @@ param(
 
   [switch]$Quiet,
 
-  [switch]$AsciiTree = $true,
+  [switch]$AsciiTree = $false,
   
   [ValidateSet('All','Included')]
   [string]$MapScope = 'All'
@@ -250,9 +250,9 @@ function Write-Tree(
   [System.Collections.Generic.HashSet[string]]$IncludedRelSet,  # files only
   [System.Collections.Generic.HashSet[string]]$IncludedDirSet   # directories containing included files
 ) {
-    $tee  = if ($AsciiTree) { '+-- ' } else { '├── ' }
-    $ell  = if ($AsciiTree) { '\-- ' } else { '└── ' }
-    $pipe = if ($AsciiTree) { '|   ' } else { '|   ' }
+    $tee  = if ($AsciiTree) { '+-- ' } else { [char]0x251C + [char]0x2500 + [char]0x2500 + ' ' }
+    $ell  = if ($AsciiTree) { '\-- ' } else { [char]0x2514 + [char]0x2500 + [char]0x2500 + ' ' }
+    $pipe = if ($AsciiTree) { '|   ' } else { [char]0x2502 + '   ' }
     $sp   = '    '
 
     $rootDir = Get-Item -LiteralPath $Root -ErrorAction Stop
