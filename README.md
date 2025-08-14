@@ -12,7 +12,7 @@ It’s mainly ideal for pasting code into LLMs, but could also be useful for cod
 
 ## Highlights
 
-- **Smart language fences** (```powershell, ```csharp, ```python, etc.) based on file extension/name
+- **Smart language fences** (`powershell`, `csharp`, `python`, etc.) based on file extension/name
 - **Selective include**: focus on `src/*`, `README.md`, or arbitrary patterns
 - **Clean map generation**: maps **only included files by default** when `-Include` is used
 - **Binary guard**: avoids obviously binary files and large files by size
@@ -102,11 +102,13 @@ Each file is wrapped with file markers; when enabled, code fences and line numbe
      1 | function Test-RiDVirtualization {
      2 |     <# .SYNOPSIS ... #>
      3 |     ...
-``` 
-# ==== END FILE: src\Public\Test-RiDVirtualization.ps1
 ```
 
 At the end of the flat file you’ll see a summary with counts and details for skipped files (too large, binary‑like, or filtered out as “not code”).
+```
+# Included files: 2
+# Skipped files:  0
+```
 
 The map file starts with the repository root and timestamp, followed by a directory tree. Example (ASCII):
 
