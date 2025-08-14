@@ -2,35 +2,30 @@
 
 `Flatten-CodeRepo.ps1` scans a repository, collects code/text files, and produces:
 
-- **Flat file**: one concatenated `.txt` with optional **code fences** and **line numbers**
-- **Tree map**: a clean ASCII (or Unicode) directory tree of the repository (or just the included subset)
-- **Skip report**: size limits, binary‑like files, and non‑code files are summarized at the end
-
-It’s mainly ideal for pasting code into LLMs, but could also be useful for code reviews, audits, retention/backups, or quick offline browsing.
+- **Flat file**: one concatenated `.txt` with optional **code fences** and **line numbers**.
+- **Quick Index**: a top-of-file index (`filename → absolute line range`) so agents (and you) can jump fast.
+- **Public API surface** *(PowerShell repos)*: one‑line signatures of exported cmdlets and their parameters.
+- **Tree map**: a clean ASCII/Unicode directory tree of the repository (entire repo or just the `-Include` subset).
+- **Sidecar JSON index**: machine‑readable index (`.index.json`) for tools.
+- **Skip report**: size‑limited, binary‑like, or non‑code files listed at the end of the flat file.
 
 ---
 
 ## Highlights
 
-- **Smart language fences** (`powershell`, `csharp`, `python`, etc.) based on file extension/name
-- **Selective include**: focus on `src/*`, `README.md`, or arbitrary patterns
-- **Clean map generation**: maps **only included files by default** when `-Include` is used
-- **Binary guard**: avoids obviously binary files and large files by size
-- **Dotfiles support**: opt in via `-IncludeDotfiles`
-- **Dual PS support**: PowerShell 7+ and Windows PowerShell 5.1
+- **Smart language fences** (`powershell`, `csharp`, `python`, etc.) based on file extension/name.
+- **Selective include**: focus on `src/*`, `README.md`, or arbitrary patterns.
+- **Map scope**: show **all** folders or **only the ones containing included files**.
+- **Integrity & drift checks**: per‑file **SHA‑256** and **line counts** in each file banner.
+- **Anchors**: per‑file anchors like `[F01]` in the flat file for quick searching.
 
 ---
 
-## Installation
+## Install
 
-Just drop `Flatten-CodeRepo.ps1` anywhere on your system and run it from PowerShell.
+Just copy `Flatten-CodeRepo.ps1` into your repo (or somewhere on `PATH`).
 
-```powershell
-# Optional: unblock if downloaded from the internet
-Unblock-File .\Flatten-CodeRepo.ps1
-```
-
-You can also add the script’s folder to your `PATH` for easier use.
+PowerShell 5.1+ or PowerShell 7+ is supported.
 
 ---
 
@@ -50,175 +45,146 @@ You can also add the script’s folder to your `PATH` for easier use.
                        [-Append]
                        [-MaxFileBytes <bytes>]
                        [-Quiet]
-                       [-AsciiTree]               # default: $false (Unicode). Pass -AsciiTree:$true for ASCII
-                       [-MapScope <All|Included>] # default: 'All' unless -Include is used (see below)
+                       [-AsciiTree]
+                       [-MapScope <All|Included>]
+                       [-Index] [-ApiSummary] [-FileMetrics] [-IndexJson]
 ```
 
 > **Default MapScope behavior:**  
-> - If **`-Include` is provided** and **`-MapScope` is not explicitly set**, the script now defaults to **`Included`**.
-> - Otherwise, it defaults to **`All`**.
->
-> You can always override: `-MapScope All` to force a full tree even when `-Include` is set.
+> If **`-Include` is provided** and **`-MapScope` is not explicitly set**, the map defaults to **`Included`**.  
+> Otherwise it defaults to **`All`**. You can always override with `-MapScope All`.
 
----
+### New switches
 
-## Parameters (most used)
+- **`-Index`** *(default: on)* — Write the **QUICK INDEX** block at the top of the flat file with **absolute line ranges**.
+- **`-ApiSummary`** *(default: on)* — If a PowerShell module is detected, add a **PUBLIC API SURFACE** section using the module
+  manifest (`FunctionsToExport`) and AST‑parsed parameter lists.
+- **`-FileMetrics`** *(default: on)* — Add `lines: N` to each per‑file banner, alongside size and sha256.
+- **`-IndexJson`** *(default: on)* — Emit a `<flat>.index.json` sidecar with `{ path, start, end, lines, sha256, lang, num }`.
 
-- **`-Path` (required)**: Repository root to scan.
-- **`-OutputFile`**: Target flat file (UTF‑8 with BOM). Default: `.<repo>.flatten.<timestamp>\<repo>.flat.txt`.
-- **`-MapFile`**: Target map file (UTF‑8 with BOM). Default: `.<repo>.flatten.<timestamp>\<repo>.map.txt`.
-- **`-Extensions`**: Case‑insensitive list of allowed code extensions. Comes with a broad, sensible default.
-- **`-ExcludeDirs`**: Directories to skip anywhere in the tree (e.g., `.git`, `node_modules`, `bin`, `obj`, …).
-- **`-ExcludeFilePatterns`**: Filename globs to skip (e.g., `*.min.js`, `*.dll`, images, archives).
-- **`-Include`**: Restrict to specific repo‑relative patterns (see **Include patterns** below).
-- **`-IncludeDotfiles`**: Include hidden/dotfiles.
-- **`-LineNumbers`**: Prefix each line with a right‑aligned line number column.
-- **`-CodeFences`**: Wrap each file with a fenced code block using a detected language tag.
-- **`-Append`**: Append to an existing flat file (useful for combining multiple repos).
-- **`-MaxFileBytes`**: Skip files larger than this (default `2MB`).
-- **`-Quiet`**: Suppress log chatter.
-- **`-AsciiTree`**: ASCII tree when `$true`. Set `-AsciiTree:$false` for Unicode (`├──`, `└──`) (default).  
-- **`-MapScope`**: `All` or `Included`. See defaulting rule above.
-
-### Include patterns (repo‑relative; case‑insensitive)
-- **Single file:** `-Include src\lib\util.ps1`
-- **Directory (recursive):** `-Include src\*` or `-Include src\` or `-Include src`  
-  (folders are treated as recursive; `dir/*` works too)
-- **Wildcard by leaf name:** `-Include *.ps1,README.*`
-- You can pass a **comma‑separated string** or an **array**: `-Include "src/*,README.md"` or `-Include src/*,README.md`
-
-### Language fences
-Fences are chosen via an internal map (e.g., `.ps1`→`powershell`, `.cs`→`csharp`, `.py`→`python`, `.ts`→`typescript`, `.json`→`json`, `.md`→`markdown`, etc.). Common “code‑by‑name” files (like `Dockerfile`, `Makefile`, `CMakeLists.txt`, `.gitignore`) are also handled. Unknowns default to `text`.
-
----
-
-## Output format
-
-Each file is wrapped with file markers; when enabled, code fences and line numbers are applied inside the block:
-
-```text
-# ==== FILE: src\Public\Test-RiDVirtualization.ps1 (size: 3,697 bytes; sha256: EBA19B...) ====
-```powershell
-     1 | function Test-RiDVirtualization {
-     2 |     <# .SYNOPSIS ... #>
-     3 |     ...
-```
-
-At the end of the flat file you’ll see a summary with counts and details for skipped files (too large, binary‑like, or filtered out as “not code”).
-```
-# Included files: 2
-# Skipped files:  0
-```
-
-The map file starts with the repository root and timestamp, followed by a directory tree. Example (ASCII):
-
-```text
-./
-+-- src/
-|   +-- Public/
-|   |   +-- Test-RiDVirtualization.ps1
-|   |   \-- Sync-RiDScripts.ps1
-|   \-- Private/
-\-- README.md
-```
-
-Unicode tree output (default):
-
-```text
-./
-├── src/
-│   ├── Public/
-│   │   ├── Test-RiDVirtualization.ps1
-│   │   └── Sync-RiDScripts.ps1
-│   └── Private/
-└── README.md
-```
+> **Note on `-Append`:**  
+> Appending to an existing flat file does **not** rewrite the top of the file. To keep things fast and safe,
+> when `-Append` is used the script **skips the top-of-file Quick Index and JSON sidecar** for that run.
 
 ---
 
 ## Examples
 
-### 1) Basic
+**Basic**
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path C:\src\my-repo
 ```
 
-### 2) Custom outputs + code fences + line numbers
+**Custom outputs, code fences, and line numbers**
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path . `
-  -OutputFile out\repo.flat.txt `
-  -MapFile out\repo.map.txt `
+  -OutputFile out\repo.flat.txt -MapFile out\repo.map.txt `
   -CodeFences -LineNumbers
 ```
 
-### 3) Specific extensions + include dotfiles + larger size cap
+**Only specific content, include dotfiles, bigger limit**
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path . `
   -Extensions ps1,psm1,cs,csproj,sln `
-  -IncludeDotfiles `
+  -Include src/*,README.md -IncludeDotfiles `
   -MaxFileBytes 5242880
 ```
 
-### 4) Include only a subset (new default: map just those)
+**ASCII tree and include‑only map**
 ```powershell
-.\Flatten-CodeRepo.ps1 -Path . -Include src/*,README.md -CodeFences
-# Map will default to Included (subset) unless you override -MapScope
-```
-
-### 5) Include a subset, but force a full map
-```powershell
-.\Flatten-CodeRepo.ps1 -Path . -Include src/*,README.md -MapScope All
-```
-
-### 6) ASCII tree output
-```powershell
-.\Flatten-CodeRepo.ps1 -Path . -AsciiTree:$true
-```
-
-### 7) Append to an existing flat file
-```powershell
-.\Flatten-CodeRepo.ps1 -Path C:\src\repoA -OutputFile .\combined.flat.txt -Append
-.\Flatten-CodeRepo.ps1 -Path C:\src\repoB -OutputFile .\combined.flat.txt -Append
+.\Flatten-CodeRepo.ps1 -Path . -Include src/* -AsciiTree -MapScope Included
 ```
 
 ---
 
-## Notes & behavior
+## Output format
 
-- **Binary‑like detection:** Reads the first chunk of each file; files containing NUL bytes are treated as binary‑like and skipped.
-- **Code filter:** Only files matching known **extensions** or **known code filenames** are included; others are reported as “not a code file by filter”.
-- **Size cap:** Files larger than `-MaxFileBytes` are skipped to keep outputs manageable.
-- **Relative paths:** All patterns and reports are **repo‑relative** (e.g., `src\Public\X.ps1`). Paths are normalized to `\` on Windows.
-- **Windows PS vs PS7:** Works on both. Uses a reflection check for `Path.GetRelativePath` when available; otherwise falls back to a URI method.
+Each file is wrapped with markers; with code fences and line numbers if requested.  
+Now includes **anchors** and **line counts**:
+
+```text
+# [F03] ==== FILE: src\Public\New-RiDVM.ps1 (size: 5,400 bytes; lines: 123; sha256: EEA64F49...) ====
+```powershell
+  1 | function New-RiDVM {{
+  2 |   ...
+``` 
+# ==== END FILE: src\Public\New-RiDVM.ps1
+```
+
+**Top-of-file QUICK INDEX** example:
+
+```text
+# QUICK INDEX (absolute line ranges)
+01 src\Public\New-RiDVM.ps1....................  12-245   (123)  [sha EEA64F49]
+02 src\Public\Start-RiDVM.ps1.................. 246-310    (65)  [sha AAC29B10]
+...
+```
+
+**PUBLIC API SURFACE** example:
+
+```text
+# PUBLIC API SURFACE (PowerShell)
+New-RiDVM(Name*, DestinationPath*, CpuCount=2, MemoryMB=4096, DiskGB=60, IsoPath?, Method=auto|vmcli|vmrest|vmrun, TemplateVmx?, TemplateSnapshot?, Apply)
+Start-RiDVM(VmxPath*, Apply)
+Stop-RiDVM(VmxPath*, Hard, Apply)
+...
+```
+
+**Sidecar JSON** (`repo.flat.index.json`) snippet:
+
+```json
+[
+  {
+    "num": 3,
+    "path": "src\\Public\\New-RiDVM.ps1",
+    "start": 12,
+    "end": 245,
+    "lines": 123,
+    "sha256": "EEA64F49…",
+    "lang": "powershell"
+  }
+]
+```
 
 ---
 
-## Changelog (2025‑08‑12)
+## Changelog (2025‑08‑14)
 
-- **Fixed:** Code fence language tag no longer prints as literal `` `$lang ``; it now emits the detected language correctly.
-- **Improved UX:** When `-Include` is provided and `-MapScope` is not, the map **defaults to `Included`**.
-- **Cleanup:** When you direct outputs to non‑default locations, no empty timestamped temp folder is created in the current working directory.
-- **Docs:** Expanded examples and clarified include pattern semantics and tree output options.
+- **New:** Quick Index at the top of the flat file with absolute line ranges.
+- **New:** Public API surface summary for PowerShell modules (exported functions + parameters).
+- **New:** Sidecar JSON index for tools and agents.
+- **New:** Per‑file line counts in banners; added `[F##]` anchors for quick search.
+- **Improved:** Default `-MapScope Included` when `-Include` is used and `-MapScope` not provided.
+- **Fixed:** No empty timestamped folder is created when custom output paths are used.
+
+---
+
+## FAQ
+
+**Q: What does “apply a patch” mean? Is that a Git thing?**  
+Yes — in Git a *patch* is a text file with the diff between versions.
+Applying it rewrites the target file accordingly. If you don’t want to use patches,
+just replace your script with the updated `Flatten-CodeRepo.ps1` from this repo.
+
+**Q: Where do the API signatures come from?**  
+From your module’s `.psd1` `FunctionsToExport` and static parsing of `src\Public\*.ps1`
+to extract parameter names, defaults, and which are mandatory.
+
+**Q: What if I don’t want the index/API?**  
+Use `-Index:$false -ApiSummary:$false -IndexJson:$false`.
 
 ---
 
 ## Troubleshooting
 
-- **My map looks empty/minimal:** If you used `-Include`, the map now defaults to just those files. Pass `-MapScope All` for a full tree.
-- **A file was skipped as “not code”:** Add its extension via `-Extensions` or rename accordingly. Some special names are recognized automatically (e.g., `Dockerfile`).
-- **Output encoding:** Files are written as UTF‑8 with BOM for broad compatibility.
+- **Map seems too small:** If you used `-Include` and didn’t set `-MapScope`, the map defaults to the **included subset**.
+  Pass `-MapScope All` to force the full tree.
+- **Index missing:** You used `-Append`. The script doesn’t rewrite the top-of-file in append mode.
+- **ObjectDisposedException on exit (“Cannot write to a closed TextWriter”):** This happens if the script disposes the file writers in the main block and then the `finally` tries to flush them again. Fixed by disposing defensively in `finally` (and setting `$flatWriter = $null` after disposing).
 
 ---
 
 ## License
 
-This project is offered under **The Unlicense** (public domain dedication) — do whatever you want, for any purpose, without restriction. See `LICENSE`.
+MIT — do whatever you want, just keep the copyright and license text.
 
----
-
-## Credits
-
-- Original concept and implementation **by iStokee**  
-- Pair‑engineering, docs, and refinements with **ChatGPT (GPT‑5 Thinking)**
-
-Happy flattening!

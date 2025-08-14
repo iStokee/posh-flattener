@@ -39,6 +39,14 @@ param(
   [string[]]$ExcludeDirs = @('.git','.github','node_modules','bin','obj','.vs','.vscode','dist','build','out','target','packages','.idea'),
 
   # File patterns to skip (glob against file name only)
+
+  # New features
+  [switch]$Index = $true,
+  [switch]$ApiSummary = $true,
+  [switch]$FileMetrics = $true,
+  [switch]$IndexJson = $true,
+
+
   [string[]]$ExcludeFilePatterns = @('*.min.js','*.min.css','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.dll','*.exe','*.pdb','*.jpg','*.jpeg','*.png','*.gif','*.webp','*.zip','*.7z','*.tar','*.gz','*.pdf','*.mp4','*.mov','*.wav','*.mp3','*.ico'),
 
   # Only include files matching these patterns (repo-relative).
@@ -64,6 +72,8 @@ param(
   [string]$MapScope = 'All'
 
 )
+
+
 
 # ---- normalize list parameters (allow comma-separated single strings) ----
 function _Split-IfSingleCommaString([string[]]$arr) {
@@ -224,8 +234,13 @@ function Is-LikelyText([IO.FileInfo]$f) {
     [void]$fs.Read($buf, 0, $len)
     if ($buf -contains 0) { return $false }
     return $true
-  } catch { return $false } finally { if ($fs) { $fs.Dispose() } }
+  } catch {
+    return $false
+  } finally {
+    try { if ($fs) { $fs.Dispose() } } catch {}
+  }
 }
+
 
 function Get-FenceLang([IO.FileInfo]$f) {
   $ext = ($f.Extension.TrimStart('.')).ToLowerInvariant()
@@ -309,8 +324,161 @@ function Write-Tree(
     $Writer.WriteLine()
   }
 
+
+function Get-PsApiSurface {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]
+    [string]$Root
+  )
+
+  $Root = (Resolve-Path -Path $Root).Path
+
+  # Helpers
+  function Parse-FunctionSignature {
+    param([System.Management.Automation.Language.FunctionDefinitionAst]$func)
+    $params = @()
+    foreach ($p in $func.Parameters) {
+      $name = $p.Name.VariablePath.UserPath
+      $isMandatory = $false
+      foreach ($attr in $p.Attributes) {
+        if ($attr.TypeName.GetReflectionType().Name -eq 'ParameterAttribute') {
+          # NamedArguments may list Mandatory = $true
+          foreach ($na in $attr.NamedArguments) {
+            if ($na.ArgumentName -eq 'Mandatory' -and $na.Argument.Value -eq $true) { $isMandatory = $true }
+          }
+        }
+      }
+      $default = $null
+      if ($p.DefaultValue) { $default = $p.DefaultValue.Extent.Text.Trim() }
+      $suffix = if ($isMandatory) { '*' } elseif ($default) { "=$default" } else { '' }
+      $params += ($name + $suffix)
+    }
+    $sig = if ($params.Count) { $func.Name + '(' + ($params -join ', ') + ')' } else { $func.Name + '()' }
+    return $sig
+  }
+
+  # 1) Manifest (psd1) check
+  $psd1 = Get-ChildItem -Path $Root -Filter *.psd1 -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($psd1) {
+    try {
+      $manifest = Import-PowerShellDataFile -Path $psd1.FullName -ErrorAction Stop
+      if ($manifest.FunctionsToExport -and $manifest.FunctionsToExport.Count -gt 0) {
+        # Try to locate corresponding files and parse their AST for params (best-effort)
+        $out = [System.Collections.Generic.List[string]]::new()
+        foreach ($fn in $manifest.FunctionsToExport) {
+          # locate a file with that function name under likely module folders
+          $candidates = Get-ChildItem -Path (Join-Path $Root '*') -Include "$fn.ps1","$fn.psm1","$fn.psd1" -Recurse -ErrorAction SilentlyContinue
+          $astParsed = $false
+          foreach ($c in $candidates) {
+            try {
+              $tokens = $null; $errors = $null
+              $ast = [System.Management.Automation.Language.Parser]::ParseFile($c.FullName,[ref]$tokens,[ref]$errors)
+              $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true)
+              if ($func) { $out.Add((Parse-FunctionSignature -func $func)); $astParsed = $true; break }
+            } catch { }
+          }
+          if (-not $astParsed) { $out.Add("$fn (signature unknown)") }
+        }
+        return $out
+      }
+    } catch { Write-Verbose "Manifest parse failed: $_" }
+  }
+
+  # 2) Look for *.psm1, prefer repo root src/ or top-level
+  $psm1 = Get-ChildItem -Path $Root -Filter *.psm1 -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($psm1) {
+    try {
+      $text = Get-Content -Path $psm1.FullName -Raw -ErrorAction Stop
+      # look for explicit Export-ModuleMember -Function
+      if ($text -match 'Export-ModuleMember\s*-Function\s*\@?\(?') {
+        # naive extract: find array/list in the call; then parse function names
+        $matches = [regex]::Matches($text, 'Export-ModuleMember\s*-Function\s*(?:@\(|\(|\s+)\s*([^\)\n]+)\)', 'Singleline')
+        $names = @()
+        foreach ($m in $matches) {
+          $list = $m.Groups[1].Value
+          # strip @(...), quotes, commas
+          $list = $list -replace '@\(|\)|`n|`r','' -replace '[\`"''\[\]]','' -replace ',',' ' 
+          $names += ($list -split '\s+' | Where-Object { $_ -ne '' })
+        }
+        if ($names.Count -gt 0) {
+          $out = [System.Collections.Generic.List[string]]::new()
+          foreach ($fn in $names) {
+            # try to parse its source like above (search for file, parse AST)
+            $candidate = Get-ChildItem -Path $Root -Filter "$fn.ps1" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($candidate) {
+              $tokens = $null; $errors = $null
+              $ast = [System.Management.Automation.Language.Parser]::ParseFile($candidate.FullName,[ref]$tokens,[ref]$errors)
+              $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $fn }, $true)
+              if ($func) { $out.Add((Parse-FunctionSignature -func $func)); continue }
+            }
+            $out.Add("$fn (signature unknown)")
+          }
+          return $out
+        }
+      }
+
+      # 2b) look for loader pattern dot-sourcing Public/
+      if ($text -match "Get-ChildItem.*Public" -or $text -match "Join-Path.*'Public'") {
+        $publicDir = Get-ChildItem -Path (Join-Path $psm1.Directory.FullName 'Public') -Filter *.ps1 -Recurse -ErrorAction SilentlyContinue
+        if ($publicDir) {
+          $out = [System.Collections.Generic.List[string]]::new()
+          foreach ($f in $publicDir) {
+            try {
+              $tokens = $null; $errors = $null
+              $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName,[ref]$tokens,[ref]$errors)
+              $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+              if ($func) { $out.Add((Parse-FunctionSignature -func $func)) } else { $out.Add( (Split-Path $f.Name -LeafBase) + ' (no function AST found)') }
+            } catch { $out.Add( (Split-Path $f.Name -LeafBase) + ' (parse failed)') }
+          }
+          return $out
+        }
+      }
+    } catch { Write-Verbose "psm1 parse failed: $_" }
+  }
+
+  # 3) If a Public/ dir exists anywhere under root, use it (common convention)
+  $possiblePublic = Get-ChildItem -Path $Root -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^Public$' } | Select-Object -First 1
+  if ($possiblePublic) {
+    $out = [System.Collections.Generic.List[string]]::new()
+    $ps = Get-ChildItem -Path $possiblePublic.FullName -Filter *.ps1 -Recurse -ErrorAction SilentlyContinue
+    foreach ($f in $ps) {
+      try {
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName,[ref]$tokens,[ref]$errors)
+        $func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+        if ($func) { $out.Add((Parse-FunctionSignature -func $func)) } else { $out.Add( (Split-Path $f.Name -LeafBase) + ' (no function AST found)') }
+      } catch { $out.Add( (Split-Path $f.Name -LeafBase) + ' (parse failed)') }
+    }
+    return $out
+  }
+
+  # 4) Fallback: scan all *.ps1 for advanced functions (CmdletBinding)
+  $allPs1 = Get-ChildItem -Path $Root -Filter *.ps1 -Recurse -ErrorAction SilentlyContinue
+  $candidates = [System.Collections.Generic.List[string]]::new()
+  foreach ($f in $allPs1) {
+    try {
+      $tokens = $null; $errors = $null
+      $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName,[ref]$tokens,[ref]$errors)
+      $funcs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+      foreach ($fn in $funcs) {
+        # prefer functions that have [CmdletBinding] or Parameter attributes that look public-ish
+        $hasCmdlet = $fn.Body.Extent.Text -match '\[CmdletBinding\]' -or ($fn.Parameters | Where-Object { $_.Attributes } )
+        if ($hasCmdlet) { $candidates.Add((Parse-FunctionSignature -func $fn)) }
+      }
+    } catch { }
+  }
+
+  if ($candidates.Count -gt 0) { return $candidates }
+  return @("No exported/public functions detected automatically. Consider adding a module manifest (*.psd1) or using Export-ModuleMember in your .psm1. As fallback, run the script with -ApiSummary:$false and inspect candidate functions manually.")
+}
+
+
 # ----- main -----
 $root = Resolve-AbsolutePath $Path
+# If -Include is provided and -MapScope was not explicitly set, default to 'Included'
+if ($Include -and -not $PSBoundParameters.ContainsKey('MapScope')) { $MapScope = 'Included' }
+
 
 # Decide default paths lazily; only create a timestamped dir if we need defaults
 if (-not $OutputFile -or -not $MapFile) {
@@ -343,18 +511,9 @@ $flatWriter = $null
 $mapWriter  = $null
 
 try {
-  $flatWriter = New-Object System.IO.StreamWriter($OutputFile, [bool]$Append, $utf8WithBom)
   $mapWriter  = New-Object System.IO.StreamWriter($MapFile, $false, $utf8WithBom)
 
-
-  # Header
-  $flatWriter.WriteLine("# Flattened repository for: $root")
-  $flatWriter.WriteLine("# Generated: $((Get-Date).ToString('u'))")
-  $flatWriter.WriteLine("# Max file size: {0:N0} bytes" -f $MaxFileBytes)
-  $flatWriter.WriteLine()
-
-
-  # Enumerate files (unchanged)
+# Enumerate files (unchanged)
   $allFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force:$IncludeDotfiles -ErrorAction SilentlyContinue | Where-Object {
       -not (Is-ExcludedDir $_.DirectoryName $ExcludeDirs) -and
       -not (Is-ExcludedFile $_ $ExcludeFilePatterns) -and
@@ -363,42 +522,24 @@ try {
 
   # Build sets for Included scope
   $IncludedRelSet = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+  $IncludedDirSet = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
   $included = 0
   $skipped  = New-Object System.Collections.Generic.List[string]
 
-  foreach ($f in $allFiles) {
-    $rel = _Norm-Rel (Get-RelativePath $root $f.FullName)
-    [void]$IncludedRelSet.Add($rel)
-  }
+  
 
-  $IncludedDirSet = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
-  # make sure root is considered present when using Included
-  [void]$IncludedDirSet.Add('')
-  foreach ($rel in $IncludedRelSet) {
-    $dir = Split-Path -Path $rel -Parent
-    while ($dir) {
-      if (-not $IncludedDirSet.Contains($dir)) { [void]$IncludedDirSet.Add($dir) }
-      $parent = Split-Path -Path $dir -Parent
-      if ($parent -eq $dir) { break }
-      $dir = $parent
-    }
-  }
-
-  # Now write the map (AFTER sets are ready)
-  Write-Tree -Root $root `
-    -Writer $mapWriter `
-    -ExDirs $ExcludeDirs `
-    -IncludeHidden:$IncludeDotfiles `
-    -MapScope $MapScope `
-    -IncludedRelSet $IncludedRelSet `
-    -IncludedDirSet $IncludedDirSet
-
-
+  # Prepare temp flat content writer and tracking for index
+  $tmpFlat = [System.IO.Path]::GetTempFileName()
+  $contentWriter = New-Object System.IO.StreamWriter($tmpFlat, $false, $utf8WithBom)
+  $absLine = 1
+  $fileIndex = New-Object System.Collections.Generic.List[object]
+  $fileCounter = 1
+  $skipped  = New-Object System.Collections.Generic.List[string]
+  $included = 0
 
   foreach ($f in $allFiles) {
     if ($f.Length -gt $MaxFileBytes) { 
       $skipped.Add("$((Get-RelativePath $root $f.FullName)) (too large: $($f.Length.ToString('N0')) bytes)") | Out-Null
-
       continue 
     }
     if (-not (Is-KnownCode $f $Extensions $KnownCodeFilenames)) {
@@ -411,49 +552,154 @@ try {
     }
 
     $rel = Get-RelativePath $root $f.FullName
+    $relNorm = _Norm-Rel $rel
+    [void]$IncludedRelSet.Add($relNorm)
+    $relDir = Split-Path -Parent $relNorm
+    while ($relDir) {
+      [void]$IncludedDirSet.Add($relDir)
+      $relDir = Split-Path -Parent $relDir
+    }
     $hashObj = Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName -ErrorAction SilentlyContinue
     $hash = if ($hashObj) { $hashObj.Hash } else { "n/a" }
+    $lang = Get-FenceLang $f
 
-    $flatWriter.WriteLine("# ==== FILE: $rel (size: $($f.Length.ToString('N0')) bytes; sha256: $hash) ====")
+    # Read file once for counting + writing
+    $text = Get-Content -LiteralPath $f.FullName -Raw
+    $lines = $text -split '\r?\n'
+    if ($lines[-1] -eq '') { $fileLineCount = ($lines.Length - 1) } else { $fileLineCount = $lines.Length }
 
-    if ($CodeFences) {
-      $lang = Get-FenceLang $f
-      $flatWriter.WriteLine([string]::Concat('```', $lang))
-    }
+    $anchorTag = ('F{0}' -f $fileCounter.ToString('00'))
+    $metricsPart = if ($FileMetrics) { "; lines: $fileLineCount" } else { "" }
+    $contentWriter.WriteLine( ("# [{0}] ==== FILE: {1} (size: {2} bytes{3}; sha256: {4}) ====" -f $anchorTag, $rel, $f.Length.ToString('N0'), $metricsPart, $hash) )
+    $start = $absLine
+    $absLine++
+
+    if ($CodeFences) { $contentWriter.WriteLine([string]::Concat('```', $lang)); $absLine++ }
 
     if ($LineNumbers) {
       $ln = 1
-      foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
-        $flatWriter.WriteLine(("{0,6} | {1}" -f $ln, $line))
-        $ln++
+      foreach ($line in $lines) {
+        $contentWriter.WriteLine(("{0,6} | {1}" -f $ln, $line))
+        $ln++; $absLine++
       }
     } else {
-      $flatWriter.WriteLine((Get-Content -LiteralPath $f.FullName -Raw))
+      $contentWriter.WriteLine($text)
+      $absLine += $fileLineCount
     }
 
-    if ($CodeFences) { $flatWriter.WriteLine('```') }
+    if ($CodeFences) { $contentWriter.WriteLine('```'); $absLine++ }
 
-    $flatWriter.WriteLine("# ==== END FILE: $rel")
-    $flatWriter.WriteLine()
+    $contentWriter.WriteLine( ("# ==== END FILE: {0}" -f $rel) ); $absLine++
+    $contentWriter.WriteLine(); $absLine++
+
+    $fileIndex.Add([pscustomobject]@{
+      Num    = $fileCounter
+      Path   = $rel
+      Start  = $start
+      End    = $absLine - 1
+      Lines  = $fileLineCount
+      Sha256 = $hash
+      Lang   = $lang
+    })
+
     $included++
-
+    $fileCounter++
   }
 
-  # Footer / summary
-  $flatWriter.WriteLine("# Included files: $included")
-  $flatWriter.WriteLine("# Skipped files:  $($skipped.Count)")
+  # Footer / summary (in content)
+  $contentWriter.WriteLine("# Included files: $included")
+  $contentWriter.WriteLine("# Skipped files:  $($skipped.Count)")
   if ($skipped.Count -gt 0) {
-    $flatWriter.WriteLine("# Skipped detail:")
-    foreach ($s in $skipped) { $flatWriter.WriteLine("#   - $s") }
+    $contentWriter.WriteLine("# Skipped detail:")
+    foreach ($s in $skipped) { $contentWriter.WriteLine("#   - $s") }
   }
 
+  Write-Tree -Root $root `
+  -Writer $mapWriter `
+  -ExDirs $ExcludeDirs `
+  -IncludeHidden:$IncludeDotfiles `
+  -MapScope $MapScope `
+  -IncludedRelSet $IncludedRelSet `
+  -IncludedDirSet $IncludedDirSet
+
+  
+  $contentWriter.Flush(); $contentWriter.Dispose()
+
+  # Build header (banner, index, API surface)
+  $headerSb = New-Object System.Text.StringBuilder
+  [void]$headerSb.AppendLine("# Flattened repository for: $root")
+  [void]$headerSb.AppendLine("# Generated: $((Get-Date).ToString('u'))")
+  [void]$headerSb.AppendLine("# Max file size: {0:N0} bytes" -f $MaxFileBytes)
+  [void]$headerSb.AppendLine("")
+
+  $apiLines = @()
+  if ($ApiSummary) {
+    try { $apiLines = Get-PsApiSurface -Root $root } catch { $apiLines = @() }
+  }
+
+  # Pre-compute header line count to offset absolute ranges
+  $headerBaseLines = 4  # 3 banner lines + 1 blank
+  $indexLines = if ($Index) { 1 + $fileIndex.Count + 1 } else { 0 }  # header + entries + blank
+  $apiLinesCount = if ($ApiSummary -and $apiLines.Count -gt 0) { 1 + $apiLines.Count + 1 } else { 0 }
+  $headerLines = $headerBaseLines + $indexLines + $apiLinesCount
+
+  $fileIndexAdj = foreach ($fi in $fileIndex) {
+    [pscustomobject]@{
+      Num=$fi.Num; Path=$fi.Path; Start=($fi.Start + $headerLines); End=($fi.End + $headerLines); Lines=$fi.Lines; Sha256=$fi.Sha256; Lang=$fi.Lang
+    }
+  }
+
+  if ($Index) {
+    [void]$headerSb.AppendLine("# QUICK INDEX (absolute line ranges)")
+    $pathWidth = ($fileIndexAdj | Measure-Object -Property Path -Maximum).Maximum.Length
+    if (-not $pathWidth) { $pathWidth = 25 }
+    $pathWidth = [Math]::Max(25, [Math]::Min(100, $pathWidth))
+    foreach ($fi in $fileIndexAdj) {
+      $num = $fi.Num.ToString('00')
+      $range = "{0}-{1}" -f $fi.Start, $fi.End
+      $lineInfo = "({0})" -f $fi.Lines
+      $shaShort = if ($fi.Sha256.Length -ge 8) { $fi.Sha256.Substring(0,8) } else { $fi.Sha256 }
+      [void]$headerSb.AppendLine(("{0} {1}  {2,-12} {3,6}  [sha {4}]" -f $num, $fi.Path.PadRight($pathWidth,'.'), $range, $lineInfo, $shaShort))
+    }
+    [void]$headerSb.AppendLine("")
+  }
+
+  if ($ApiSummary -and $apiLines.Count -gt 0) {
+    [void]$headerSb.AppendLine("# PUBLIC API SURFACE (PowerShell)")
+    foreach ($l in $apiLines) { [void]$headerSb.AppendLine($l) }
+    [void]$headerSb.AppendLine("")
+  }
+
+  # Stitch final output
+  if ($Append) {
+    Write-Log "Append mode detected: index and JSON sidecar are skipped."
+    $flatWriter = New-Object System.IO.StreamWriter($OutputFile, $true, $utf8WithBom)
+    $flatWriter.WriteLine("")
+    $flatWriter.Write($headerSb.ToString())
+    $flatWriter.Write((Get-Content -LiteralPath $tmpFlat -Raw))
+    $flatWriter.Flush(); $flatWriter.Dispose(); $flatWriter = $null
+  } else {
+    $flatWriter = New-Object System.IO.StreamWriter($OutputFile, $false, $utf8WithBom)
+    $flatWriter.Write($headerSb.ToString())
+    $flatWriter.Write((Get-Content -LiteralPath $tmpFlat -Raw))
+    $flatWriter.Flush(); $flatWriter.Dispose(); $flatWriter = $null
+  }
+  Remove-Item $tmpFlat -ErrorAction SilentlyContinue
+
+  if ($IndexJson -and -not $Append) {
+    $jsonPath = [System.IO.Path]::ChangeExtension($OutputFile, ".index.json")
+    $json = $fileIndexAdj | ConvertTo-Json -Depth 5
+    Set-Content -Path $jsonPath -Value $json -Encoding utf8
+  }
 
   if (-not $Quiet) {
     Write-Host ""
     Write-Host "Done."
     Write-Host " - Flattened: $OutputFile"
     Write-Host " - Map:       $MapFile"
+    if ($IndexJson -and -not $Append) { Write-Host " - Index:     $jsonPath" }
   }
+
 }
 catch {
   Write-Host "Error: $($_.Exception.Message)"
@@ -464,6 +710,6 @@ catch {
 }
 
 finally {
-  if ($flatWriter) { $flatWriter.Flush(); $flatWriter.Dispose() }
-  if ($mapWriter)  { $mapWriter.Flush();  $mapWriter.Dispose() }
+  try { if ($flatWriter) { $flatWriter.Dispose(); $flatWriter = $null } } catch {}
+  try { if ($mapWriter)  { $mapWriter.Dispose();  $mapWriter  = $null } } catch {}
 }
