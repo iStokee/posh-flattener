@@ -193,15 +193,6 @@ Unicode tree output (default):
 
 ---
 
-## Changelog (2025‑08‑12)
-
-- **Fixed:** Code fence language tag no longer prints as literal `` `$lang ``; it now emits the detected language correctly.
-- **Improved UX:** When `-Include` is provided and `-MapScope` is not, the map **defaults to `Included`**.
-- **Cleanup:** When you direct outputs to non‑default locations, no empty timestamped temp folder is created in the current working directory.
-- **Docs:** Expanded examples and clarified include pattern semantics and tree output options.
-
----
-
 ## Troubleshooting
 
 - **My map looks empty/minimal:** If you used `-Include`, the map now defaults to just those files. Pass `-MapScope All` for a full tree.
