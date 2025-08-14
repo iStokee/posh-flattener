@@ -3,7 +3,7 @@
 `Flatten-CodeRepo.ps1` scans a repository, collects code/text files, and produces:
 
 - **Flat file**: one concatenated `.txt` with optional **code fences** and **line numbers**
-- **Tree map**: a clean ASCII (or Unicode) directory tree of the repository (or just the included subset)
+- **Tree map**: a clean Unicode or ASCII directory tree of the repository (or just the included subset)
 - **Skip report**: size limits, binary‑like files, and non‑code files are summarized at the end
 
 It’s mainly ideal for pasting code into LLMs, but could also be useful for code reviews, audits, retention/backups, or quick offline browsing.
