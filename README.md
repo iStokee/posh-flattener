@@ -107,8 +107,6 @@ Now includes **anchors** and **line counts**:
 ```powershell
   1 | function New-RiDVM {{
   2 |   ...
-``` 
-# ==== END FILE: src\Public\New-RiDVM.ps1
 ```
 
 **Top-of-file QUICK INDEX** example:
@@ -145,26 +143,9 @@ Stop-RiDVM(VmxPath*, Hard, Apply)
   }
 ]
 ```
-
----
-
-## Changelog (2025‑08‑14)
-
-- **New:** Quick Index at the top of the flat file with absolute line ranges.
-- **New:** Public API surface summary for PowerShell modules (exported functions + parameters).
-- **New:** Sidecar JSON index for tools and agents.
-- **New:** Per‑file line counts in banners; added `[F##]` anchors for quick search.
-- **Improved:** Default `-MapScope Included` when `-Include` is used and `-MapScope` not provided.
-- **Fixed:** No empty timestamped folder is created when custom output paths are used.
-
 ---
 
 ## FAQ
-
-**Q: What does “apply a patch” mean? Is that a Git thing?**  
-Yes — in Git a *patch* is a text file with the diff between versions.
-Applying it rewrites the target file accordingly. If you don’t want to use patches,
-just replace your script with the updated `Flatten-CodeRepo.ps1` from this repo.
 
 **Q: Where do the API signatures come from?**  
 From your module’s `.psd1` `FunctionsToExport` and static parsing of `src\Public\*.ps1`
