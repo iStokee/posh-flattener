@@ -115,13 +115,124 @@ if ($Include -and $Include.Count -gt 0 -and -not $PSBoundParameters.ContainsKey(
 
 Set-StrictMode -Version Latest
 
+# temp clone/extract root for URL inputs (for cleanup in finally)
+$script:__TempRepoRoot = $null
+$script:__TempRepoSubpath = $null
+
 function Write-Log($msg) {
   if (-not $Quiet) { Write-Host $msg }
 }
 
 function Resolve-AbsolutePath([string]$p) {
-  $rp = Resolve-Path -LiteralPath $p -ErrorAction Stop
-  return $rp.ProviderPath
+  # Accepts: local path OR a Git URL/HTTP URL (GitHub supported explicitly).
+  # If URL, we clone (if git available) or download a ZIP archive (GitHub) and return the local path.
+  # Supports GitHub /tree/<branch>/<subpath> URLs.
+  # Sets $script:__TempRepoRoot for later cleanup.
+
+  # Fast path: local filesystem
+  try {
+    $rp = Resolve-Path -LiteralPath $p -ErrorAction Stop
+    return $rp.ProviderPath
+  } catch {
+    # Fall through; may be a URL
+  }
+
+  # Is it an absolute URI?
+  $uri = $null
+  if (-not [System.Uri]::TryCreate($p, [System.UriKind]::Absolute, [ref]$uri)) {
+    throw "Path not found and not a valid URL: $p"
+  }
+
+  if ($uri.Scheme -notin @('http','https','git','ssh')) {
+    throw "Unsupported URI scheme '$($uri.Scheme)'. Only http/https/git/ssh are supported."
+  }
+
+  # If git exists, prefer it for any URL (handles auth/branches better).
+  $git = Get-Command git -ErrorAction SilentlyContinue
+  if ($git) {
+    # For GitHub /tree/<branch>/<subpath>, try to extract branch and subpath.
+    $branch = $null
+    $subpath = $null
+    if ($uri.Host -eq 'github.com') {
+      $segments = $uri.AbsolutePath.Trim('/').Split('/')
+      if ($segments.Length -ge 3 -and $segments[2] -eq 'tree') {
+        $owner  = $segments[0]; $repo = $segments[1]
+        $branch = $segments[3]
+        if ($segments.Length -gt 4) {
+          $subpath = [string]::Join('/', $segments[4..($segments.Length-1)])
+        }
+        $p = "https://github.com/$owner/$repo.git"
+      }
+    }
+
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("posh-flattener_" + ([guid]::NewGuid().ToString()))
+    git clone --depth=1 $(if ($branch) { @('--branch', $branch) }) -- $p $tmp | Out-Null
+    if (-not (Test-Path -LiteralPath $tmp)) { throw "git clone failed for: $p" }
+    $script:__TempRepoRoot = $tmp
+    if ($subpath) {
+      $sp = Join-Path $tmp $subpath
+      if (-not (Test-Path -LiteralPath $sp)) { throw "Subpath '$subpath' not found in cloned repository." }
+      return (Resolve-Path -LiteralPath $sp).ProviderPath
+    }
+    return (Resolve-Path -LiteralPath $tmp).ProviderPath
+  }
+
+  # Fallback: GitHub ZIP download (http/https only)
+  if ($uri.Host -ne 'github.com') {
+    throw "git is not available and non-GitHub URL was provided. Install Git or provide a local path/GitHub URL."
+  }
+
+  # Parse GitHub path forms:
+  # /owner/repo
+  # /owner/repo/tree/<branch>/<subpath...>
+  $parts = $uri.AbsolutePath.Trim('/').Split('/')
+  if ($parts.Length -lt 2) {
+    throw "Unrecognized GitHub URL format: $p"
+  }
+  $owner = $parts[0]; $repo = $parts[1]
+  $branch = 'main'; $subpath = $null
+
+  if ($parts.Length -ge 3 -and $parts[2] -eq 'tree') {
+    if ($parts.Length -lt 4) { throw "Missing branch in tree URL: $p" }
+    $branch = $parts[3]
+    if ($parts.Length -gt 4) {
+      $subpath = [string]::Join('/', $parts[4..($parts.Length-1)])
+    }
+  }
+
+  $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("posh-flattener_" + ([guid]::NewGuid().ToString()))
+  $zip = Join-Path $tmpRoot "$repo-$branch.zip"
+  New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
+
+  $zipUrl = "https://codeload.github.com/$owner/$repo/zip/refs/heads/$branch"
+  try {
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing -ErrorAction Stop | Out-Null
+  } catch {
+    # Try master if main fails
+    $branch = 'master'
+    $zipUrl = "https://codeload.github.com/$owner/$repo/zip/refs/heads/$branch"
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing -ErrorAction Stop | Out-Null
+  }
+
+  $extract = Join-Path $tmpRoot "extract"
+  Expand-Archive -Path $zip -DestinationPath $extract -Force
+  # GitHub names the root folder as repo-branch
+  $rootCandidate = Join-Path $extract "$repo-$branch"
+  if (-not (Test-Path -LiteralPath $rootCandidate)) {
+    # Fallback to first directory
+    $dirs = Get-ChildItem -Path $extract -Directory
+    if ($dirs.Count -eq 0) { throw "Unexpected ZIP structure for $zipUrl" }
+    $rootCandidate = $dirs[0].FullName
+  }
+
+  $script:__TempRepoRoot = $tmpRoot
+  if ($subpath) {
+    $local = Join-Path $rootCandidate $subpath
+    if (-not (Test-Path -LiteralPath $local)) { throw "Subpath '$subpath' not found in archive." }
+    return (Resolve-Path -LiteralPath $local).ProviderPath
+  }
+
+  return (Resolve-Path -LiteralPath $rootCandidate).ProviderPath
 }
 
 # Some files are "code" even without extensions
@@ -632,15 +743,26 @@ try {
   [void]$headerSb.AppendLine("# Max file size: {0:N0} bytes" -f $MaxFileBytes)
   [void]$headerSb.AppendLine("")
 
-  $apiLines = @()
-  if ($ApiSummary) {
-    try { $apiLines = Get-PsApiSurface -Root $root } catch { $apiLines = @() }
+  $__ApiSummaryEff = $ApiSummary
+if (-not $PSBoundParameters.ContainsKey('ApiSummary')) {
+  # Auto-enable only if we actually have PowerShell files in scope
+  $__ApiSummaryEff = ($allFiles | Where-Object { $_.Extension -match '^\.(ps1|psm1|psd1)$' } | Select-Object -First 1) -ne $null
+}
+$apiLines = @()
+  if ($__ApiSummaryEff) {
+    try { $apiLines = Get-PsApiSurface -Root $root } catch { $__ApiSummaryEff = $ApiSummary
+if (-not $PSBoundParameters.ContainsKey('ApiSummary')) {
+  # Auto-enable only if we actually have PowerShell files in scope
+  $__ApiSummaryEff = ($allFiles | Where-Object { $_.Extension -match '^\.(ps1|psm1|psd1)$' } | Select-Object -First 1) -ne $null
+}
+$apiLines = @() }
   }
 
   # Pre-compute header line count to offset absolute ranges
   $headerBaseLines = 4  # 3 banner lines + 1 blank
   $indexLines = if ($Index) { 1 + $fileIndex.Count + 1 } else { 0 }  # header + entries + blank
-  $apiLinesCount = if ($ApiSummary -and $apiLines.Count -gt 0) { 1 + $apiLines.Count + 1 } else { 0 }
+  $apiCount = if ($null -eq $apiLines) { 0 } else { ($apiLines | Measure-Object).Count }
+$apiLinesCount = if ($__ApiSummaryEff -and $apiCount -gt 0) { 1 + $apiCount + 1 } else { 0 }
   $headerLines = $headerBaseLines + $indexLines + $apiLinesCount
 
   $fileIndexAdj = foreach ($fi in $fileIndex) {
@@ -664,7 +786,8 @@ try {
     [void]$headerSb.AppendLine("")
   }
 
-  if ($ApiSummary -and $apiLines.Count -gt 0) {
+  $apiCount = if ($null -eq $apiLines) { 0 } else { ($apiLines | Measure-Object).Count }
+if ($__ApiSummaryEff -and $apiCount -gt 0) {
     [void]$headerSb.AppendLine("# PUBLIC API SURFACE (PowerShell)")
     foreach ($l in $apiLines) { [void]$headerSb.AppendLine($l) }
     [void]$headerSb.AppendLine("")
@@ -712,4 +835,5 @@ catch {
 finally {
   try { if ($flatWriter) { $flatWriter.Dispose(); $flatWriter = $null } } catch {}
   try { if ($mapWriter)  { $mapWriter.Dispose();  $mapWriter  = $null } } catch {}
+  try { if ($script:__TempRepoRoot) { Remove-Item -LiteralPath $script:__TempRepoRoot -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
 }

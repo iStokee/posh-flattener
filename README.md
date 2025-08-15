@@ -70,6 +70,50 @@ PowerShell 5.1+ or PowerShell 7+ is supported.
 
 ## Examples
 
+---
+
+## URL input (GitHub)
+
+`-Path` accepts either a local folder **or a Git URL**. For GitHub, both of the following work:
+
+- Whole repo (default branch):  
+  ```powershell
+  .\Flatten-CodeRepo.ps1 -Path https://github.com/OWNER/REPO
+  ```
+
+- Specific branch and/or subfolder:  
+  ```powershell
+  .\Flatten-CodeRepo.ps1 -Path https://github.com/OWNER/REPO/tree/feature/my-branch/src
+  ```
+
+**How it works**
+- If **Git is available**, the script does a shallow clone (`git clone --depth=1`), respecting `/tree/<branch>/<subpath>`.
+- If **Git is not available**, the script **downloads a ZIP** from GitHub (`codeload.github.com`) for `main` (fallback `master`), then expands it and targets the optional subpath.
+
+The downloaded/checked-out temp folder is **cleaned up automatically** at the end of the run.
+
+**Requirements**
+- For ZIP fallback: PowerShell `Invoke-WebRequest` and `Expand-Archive` must be available (they are on Windows PowerShell 5.1+ and PowerShell 7+).
+
+---
+
+## Additional examples (URLs)
+
+**Flatten a GitHub repo to files with fences & numbers**
+```powershell
+.\Flatten-CodeRepo.ps1 -Path https://github.com/iStokee/ridctl `
+  -OutputFile C:\temp\ridctl.flat.txt -MapFile C:\temp\ridctl.map.txt `
+  -CodeFences -LineNumbers -ExcludeDirs .git,.github
+```
+
+**Flatten a subfolder on a branch**
+```powershell
+.\Flatten-CodeRepo.ps1 -Path https://github.com/iStokee/ridctl/tree/dev/src `
+  -Include src/* -MapScope Included
+```
+
+
+
 **Basic**
 ```powershell
 .\Flatten-CodeRepo.ps1 -Path C:\src\my-repo
@@ -148,8 +192,9 @@ Stop-RiDVM(VmxPath*, Hard, Apply)
 
 ---
 
-## Changelog (2025‑08‑14)
+## Changelog (2025‑08‑15)
 
+- **New:** **URL inputs** (`https://github.com/...` or `/tree/<branch>/<subpath>`) — uses `git` if present, otherwise ZIP fallback from GitHub.
 - **New:** Quick Index at the top of the flat file with absolute line ranges.
 - **New:** Public API surface summary for PowerShell modules (exported functions + parameters).
 - **New:** Sidecar JSON index for tools and agents.
