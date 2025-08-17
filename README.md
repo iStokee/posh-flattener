@@ -130,8 +130,6 @@ Includes **anchors** and **line counts**:
 ```powershell
   1 | function New-RiDVM {{
   2 |   ...
-``` 
-# ==== END FILE: src\Public\New-RiDVM.ps1
 ```
 
 **Top-of-file QUICK INDEX** example:
