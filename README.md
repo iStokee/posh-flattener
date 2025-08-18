@@ -255,3 +255,31 @@ MIT — do whatever you want, just keep the copyright and license text.
 
 - Original concept and implementation **by iStokee**  
 - Pair‑engineering, docs, & refinements with **ChatGPT (GPT‑5 Thinking)**
+
+---
+
+# Optional GUI (Windows)
+
+If you prefer a point‑and‑click experience, use the included **`Flatten-GUI.ps1`** wrapper.  
+It launches a small Windows Forms app where you can:
+
+- Choose a **repo folder** (or paste a **GitHub URL**)
+- Choose **output** and **map** file locations (or let defaults be created)
+- Toggle common options: **CodeFences**, **LineNumbers**, **IncludeDotfiles**, **Append**, **Quiet**
+- Set advanced options: **Extensions**, **Include**, **ExcludeDirs**, **ExcludeFilePatterns**, **MaxFileBytes**, **MapScope**, and whether to emit **Index/API/FileMetrics/IndexJson**
+
+## Run
+
+```powershell
+# In the same folder as Flatten-CodeRepo.ps1 and Flatten-GUI.ps1
+powershell -ExecutionPolicy Bypass -File .\Flatten-GUI.ps1
+```
+
+> The GUI auto‑detects a sibling `Flatten-CodeRepo.ps1`. You can also point it at a script elsewhere with the **Find Script…** button.
+
+## Notes
+
+- The **Repo/URL** box accepts either a local folder path or a full GitHub URL as described in the main README.
+- If you uncheck items that default to **on** (like **Index**), the GUI passes `-Index:$false` etc. to the script.
+- Logging is shown live in the bottom pane. You can **Cancel** a running job.
+- Settings are saved to `%APPDATA%\posh-flattener\gui.settings.json` so the GUI remembers your last choices.
