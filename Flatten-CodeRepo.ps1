@@ -675,10 +675,16 @@ try {
     $lang = Get-FenceLang $f
 
     # Read file once for counting + writing
-    $text = Get-Content -LiteralPath $f.FullName -Raw
-    $lines = $text -split '\r?\n'
-    if ($lines[-1] -eq '') { $fileLineCount = ($lines.Length - 1) } else { $fileLineCount = $lines.Length }
-
+$text = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue
+# Robust split + count: handle null/empty files without indexing [-1]
+$lines = if ($null -eq $text) { @() } else { $text -split '\\r?\\n' }
+if (($lines | Measure-Object).Count -eq 0) {
+  $fileLineCount = 0
+} elseif ($lines[-1] -eq '') {
+  $fileLineCount = ($lines.Length - 1)
+} else {
+  $fileLineCount = $lines.Length
+}
     $anchorTag = ('F{0}' -f $fileCounter.ToString('00'))
     $metricsPart = if ($FileMetrics) { "; lines: $fileLineCount" } else { "" }
     $contentWriter.WriteLine( ("# [{0}] ==== FILE: {1} (size: {2} bytes{3}; sha256: {4}) ====" -f $anchorTag, $rel, $f.Length.ToString('N0'), $metricsPart, $hash) )
