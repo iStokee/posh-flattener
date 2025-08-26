@@ -66,7 +66,7 @@ param(
 
   [switch]$Quiet,
 
-  [switch]$AsciiTree = $false,
+  [switch]$AsciiTree = $true,
   
   [ValidateSet('All','Included')]
   [string]$MapScope = 'All'
@@ -100,7 +100,7 @@ function _Rel-StartsWithDir([string]$rel, [string]$dir) {
          ($rel.StartsWith("$dir\", [StringComparison]::OrdinalIgnoreCase))
 }
 
-$Extensions          = _Split-IfSingleCommaString $Extensions
+$Extensions          = _Split-IfSingleCommaString $Extensions | ForEach-Object { $_.ToLowerInvariant() }
 $ExcludeDirs         = _Split-IfSingleCommaString $ExcludeDirs
 $ExcludeFilePatterns = _Split-IfSingleCommaString $ExcludeFilePatterns
 $Include             = _Split-IfSingleCommaString $Include
@@ -239,6 +239,7 @@ function Resolve-AbsolutePath([string]$p) {
 $KnownCodeFilenames = @(
   'Dockerfile','Makefile','CMakeLists.txt','.gitignore','.gitattributes','.editorconfig','.env','.env.example'
 )
+$KnownCodeFilenames = $KnownCodeFilenames | ForEach-Object { $_.ToLowerInvariant() }
 
 # Map file extension -> code fence language tag
 $LangMap = @{
@@ -330,7 +331,7 @@ function Is-IncludedFile([IO.FileInfo]$f, [string[]]$Patterns, [string]$Root) {
 
 
 function Is-KnownCode([IO.FileInfo]$f, [string[]]$Exts, [string[]]$KnownNames) {
-  if ($KnownNames -contains $f.Name) { return $true }
+  if ($KnownNames -contains $f.Name.ToLowerInvariant()) { return $true }
   $ext = ($f.Extension.TrimStart('.')).ToLowerInvariant()
   if ($ext) { return $Exts -contains $ext }
   return $false
@@ -645,8 +646,6 @@ try {
   $absLine = 1
   $fileIndex = New-Object System.Collections.Generic.List[object]
   $fileCounter = 1
-  $skipped  = New-Object System.Collections.Generic.List[string]
-  $included = 0
 
   foreach ($f in $allFiles) {
     if ($f.Length -gt $MaxFileBytes) { 
@@ -750,18 +749,18 @@ if (($lines | Measure-Object).Count -eq 0) {
   [void]$headerSb.AppendLine("")
 
   $__ApiSummaryEff = $ApiSummary
-if (-not $PSBoundParameters.ContainsKey('ApiSummary')) {
-  # Auto-enable only if we actually have PowerShell files in scope
-  $__ApiSummaryEff = ($allFiles | Where-Object { $_.Extension -match '^\.(ps1|psm1|psd1)$' } | Select-Object -First 1) -ne $null
-}
-$apiLines = @()
+  if (-not $PSBoundParameters.ContainsKey('ApiSummary')) {
+    # Auto-enable only if we actually have PowerShell files in scope
+    $__ApiSummaryEff = ($allFiles | Where-Object { $_.Extension -match '^\.(ps1|psm1|psd1)$' } | Select-Object -First 1) -ne $null
+  }
+  $apiLines = @()
   if ($__ApiSummaryEff) {
-    try { $apiLines = Get-PsApiSurface -Root $root } catch { $__ApiSummaryEff = $ApiSummary
-if (-not $PSBoundParameters.ContainsKey('ApiSummary')) {
-  # Auto-enable only if we actually have PowerShell files in scope
-  $__ApiSummaryEff = ($allFiles | Where-Object { $_.Extension -match '^\.(ps1|psm1|psd1)$' } | Select-Object -First 1) -ne $null
-}
-$apiLines = @() }
+    try {
+      $apiLines = Get-PsApiSurface -Root $root
+    } catch {
+      $__ApiSummaryEff = $false
+      $apiLines = @()
+    }
   }
 
   # Pre-compute header line count to offset absolute ranges
