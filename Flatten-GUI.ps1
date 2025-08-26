@@ -12,15 +12,16 @@ AAABAAYAEBAAAAAAIABPAgAAZgAAACAgAAAAACAAygQAALUCAAAwMAAAAAAgAE8HAAB/BwAAQEAAAAAA
 
 function Set-FormIcon {
   param([System.Windows.Forms.Form]$Form)
+  $ms = $null
   try {
     $bytes = [Convert]::FromBase64String($IconBase64)
     $ms = New-Object System.IO.MemoryStream(,$bytes)
     $icon = New-Object System.Drawing.Icon($ms)
     $Form.Icon = $icon
-  }
-
-catch {
+  } catch {
     # ignore icon issues
+  } finally {
+    if ($ms) { $ms.Dispose() }
   }
 }
 
