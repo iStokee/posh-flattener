@@ -11,3 +11,11 @@ dist
 .claude
 CLAUDE.md
 .DS_Store
+.git
+*.log
+*.tmp
+__pycache__
+*.pyc
+.env.local
+.next
+.github
